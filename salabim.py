@@ -3659,6 +3659,7 @@ class Qmember:
             if not q._isinternal:
                 q.env.print_trace("", "", c.name(), "enter " + q.name())
         q.length.tally(q._length)
+        q.entries.tally((c.name(), priority))
         q.number_of_arrivals += 1
 
 
@@ -3720,6 +3721,8 @@ class Queue:
         self.length = _SystemMonitor("Length of " + self.name(), level=True, initial_tally=0, monitor=monitor, type="uint32", env=self.env)
         self.length_of_stay = Monitor("Length of stay in " + self.name(), monitor=monitor, type="float", env=self.env)
         self.capacity = Monitor("Capacity of ", level=True, initial_tally=capacity, monitor=monitor, type="float", env=env)
+        self.entries = Monitor("Entries of " + self.name(), level=True, initial_tally=('', inf), monitor=monitor, env=self.env)
+        self.exits = Monitor("Exits of " + self.name(), level=True, initial_tally='', monitor=monitor, env=self.env)
         if fill is not None:
             savetrace = self.env._trace
             self.env._trace = False
@@ -3876,7 +3879,7 @@ class Queue:
         -------
         all monitors : tuple of monitors
         """
-        return (self.length, self.length_of_stay)
+        return (self.length, self.length_of_stay, self.entries, self.exits)
 
     def reset_monitors(self, monitor=None, stats_only=None):
         """
@@ -3900,6 +3903,8 @@ class Queue:
         """
         self.length.reset(monitor=monitor, stats_only=stats_only)
         self.length_of_stay.reset(monitor=monitor, stats_only=stats_only)
+        self.entries.reset(monitor=monitor, stats_only=stats_only)
+        self.exits.reset(monitor=monitor, stats_only=stats_only)
 
     def arrival_rate(self, reset=False):
         """
@@ -3970,6 +3975,8 @@ class Queue:
 
         self.length.monitor(value=value)
         self.length_of_stay.monitor(value=value)
+        self.entries.monitor(value=value)
+        self.exits.monitor(value=value)
 
     def register(self, registry):
         """
@@ -4131,6 +4138,8 @@ class Queue:
             self._name = value
             self.length.name("Length of " + self.name())
             self.length_of_stay.name("Length of stay of " + self.name())
+            self.entries("Entries of " + self.name())
+            self.exits("Exits of " + self.name())
         return self._name
 
     def rename(self, value=None):
@@ -16123,6 +16132,7 @@ class Component:
         length_of_stay = self.env._now - mx.enter_time
         q.length_of_stay.tally(length_of_stay)
         q.length.tally(q._length)
+        q.exits.tally(self.name())
         q.number_of_departures += 1
         return self
 
@@ -19444,6 +19454,7 @@ class Resource:
         honor_only_highest_priority=False,
         monitor=True,
         env=None,
+        mode='',
         *args,
         **kwargs
     ):
@@ -19485,8 +19496,10 @@ class Resource:
         )
 
         self.occupancy = _SystemMonitor("Occupancy of " + self.name(), level=True, initial_tally=0, monitor=monitor, type="float", env=self.env)
+        self.mode = _ModeMonitor(name=self.name() + ".mode", level=True, initial_tally=mode, env=self.env)
+        self._mode_time = self.env._now
         if self.env._trace:
-            self.env.print_trace("", "", self.name() + " create", "capacity=" + str(self._capacity) + (" anonymous" if self._anonymous else ""))
+            self.env.print_trace("", "", self.name() + " create", "capacity=" + str(self._capacity) + self._modetxt() + (" anonymous" if self._anonymous else ""))
         self.setup(*args, **kwargs)
 
     def ispreemptive(self):
@@ -19890,6 +19903,38 @@ class Resource:
             will be numbered)
         """
         return self._sequence_number
+
+    def set_mode(self, value=None):
+        """
+        Parameters
+        ----------
+        value: any, str recommended
+            new mode |n|
+            mode_time will be set to now
+            if omitted, no change
+        """
+        if value is not None:
+            self._mode_time = self.env._now
+            self.mode.tally(value)
+            if self.env._trace:
+                self.env.print_trace("", "", self.name() + " " + self._modetxt())
+
+    def _modetxt(self):
+        if self.mode() == "":
+            return ""
+        else:
+            return "mode=" + str(self.mode())
+
+    def mode_time(self):
+        """
+        Returns
+        -------
+        time the resource got it's latest mode : float
+            For a new resource this is
+            the time the resource was created. |n|
+            this function is particularly useful for animations.
+        """
+        return self._mode_time - self.env._offset
 
 
 class _PeriodComponent(Component):
